@@ -15,3 +15,6 @@ python3 run_PD_python.py
 # Output
 - spike_recorder.txt: text file containig two colums with neuron id and spike time in (ms)
 - raster_plot.png: raster plot of the 
+
+# Scaled down version
+There is a scaled down version in scaled branch which contains connectivity data and sample output
