@@ -17,7 +17,7 @@ source = np.array(range(1,N_cumsum[-1]+1))
 # load connecivity data. each line represents connection values of each neuron
 target = np.load('target.npy')
 weight = np.load('weight.npy')
-delay = np.load('.delay.npy')
+delay = np.load('delay.npy')
 
 # create network 
 net_layer = PD_python.Network(N=N)
