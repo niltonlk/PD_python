@@ -1,9 +1,33 @@
+'''
+filename: PD_python.py
+
+This code simulates the PD microcircuit model (Potjans and Diesmann, 2014)
+with the GL (Galves and Locherbach, 2013) neuron in discrete time.
+
+This code is part of STENDHAL package.
+A NeuroMat package for simulate neuron networks, and analyse data.
+
+Director:
+Antonio Galves
+
+Developers:
+Nilton L. Kamiji
+Christophe Pouzat
+
+Contributors:
+Renan Shimoura
+Karine Guimaraes
+Aline Duarte
+Antonio Roque
+
+July 09 2020
+'''
+
 import numpy as np
-import pandas as pd
 
 class Layer:
-    id_0 = 0 # number of neurons in the network
-    N = 10
+    id_0 = 0 # number of neurons in the network (id of the last neuron in the previous layer)
+    N = 10 # number of neurons in the layer
     net = None
     
     class P: # model parameters
@@ -17,6 +41,11 @@ class Layer:
             self.tau_syn_ex = 0.5 # excitatory synaptic time constant in (ms)
             self.tau_syn_in = 0.5 # inhibitory synaptic time constant in (ms)
             self.I_0 = 0.0 # constant current in (pA)
+            self.gamma = 0.1 # slope of the firing probability funtion in (1/mV)
+            self.r = 0.4 # curvature of the firing probability function (unitless)
+            self.V_rheo = 15.0 # rheobase potential, potential in which firing probability becomes > 0 in (mV)
+            self.poisson_rate = 8.0*10 # rate of poisson spike input in (Hz)
+            self.poisson_weight = 87.8 # weight of poisson input in (pA)
         
         def set_params(self, neuron_params):
             if 'tau_m' in neuron_params.keys():
@@ -35,6 +64,14 @@ class Layer:
                 self.tau_syn_in = neuron_params['tau_syn_in']
             if 'I_0' in neuron_params.keys():
                 self.I_0 = neuron_params['I_0']
+            if 'gamma' in neuron_params.keys():
+                self.gamma = neuron_params['gamma']
+            if 'r' in neuron_params.keys():
+                self.r = neuron_params['r']
+            if 'V_rheo' in neuron_params.keys():
+                self.V_rheo = neuron_params['V_rheo']
+            if 'poisson_rate' in neuron_params.keys():
+                self.poisson_rate = neuron_params['poisson_rate']
 
 
     class S: # state variables
@@ -46,6 +83,7 @@ class Layer:
             self.I_syn_in = np.zeros(N) # synaptic current in (pA)
             self.I_ext = np.zeros(N) # external input in (pA)
             self.is_ref = np.zeros(N).astype(int) # flag that indicates neuron refractory period
+            self.poisson = np.zeros(N).astype(int) # number of poisson spike input per neuron
         
         def reset_state(self):
             self.V_m = np.zeros(self.N)
@@ -53,6 +91,7 @@ class Layer:
             self.I_syn_in = np.zeros(self.N) # synaptic current in (pA)
             self.I_ext = np.zeros(self.N) # external input in (pA)
             self.is_ref = np.zeros(self.N).astype(int) # flag that indicates neuron refractory period
+            self.poisson = np.zeros(self.N).astype(int) # number of poisson spike input per neuron
         
         def set_params(self, params):
             if 'V_m' in params.keys():
@@ -78,16 +117,16 @@ class Layer:
             
         def calibrate(self, dt=0.1, P=None):
             self.ref_count = int(P.t_ref / dt)
-            self.P22 = np.exp(-dt/P.tau_m)
-            self.P11_ex = np.exp(-dt/P.tau_syn_ex)
-            self.P11_in = np.exp(-dt/P.tau_syn_in)
-            self.P21_ex = -P.tau_m/( P.C_m * (1.0 - P.tau_m/P.tau_syn_ex) ) * \
+            self.rho = np.exp(-dt/P.tau_m)
+            self.xi_ex = np.exp(-dt/P.tau_syn_ex)
+            self.xi_in = np.exp(-dt/P.tau_syn_in)
+            self.zeta_ex = -P.tau_m/( P.C_m * (1.0 - P.tau_m/P.tau_syn_ex) ) * \
                     np.exp(-dt/P.tau_syn_ex) * \
                     ( np.exp( dt * (1.0/P.tau_syn_ex - 1.0/P.tau_m) ) - 1.0 )
-            self.P21_in = -P.tau_m/( P.C_m * (1.0 - P.tau_m/P.tau_syn_in) ) * \
+            self.zeta_in = -P.tau_m/( P.C_m * (1.0 - P.tau_m/P.tau_syn_in) ) * \
                     np.exp(-dt/P.tau_syn_in) * \
                     ( np.exp( dt * (1.0/P.tau_syn_in - 1.0/P.tau_m) ) - 1.0 )
-            self.P20 = P.tau_m / P.C_m * ( 1.0 - self.P22 )
+            self.zeta_DC = P.tau_m / P.C_m * ( 1.0 - self.rho )
     
     
     class B: # input buffer
@@ -110,10 +149,13 @@ class Layer:
             self.weighted_spikes_in[-1][:] = 0.0
 
             
-    def __init__(self, net=None, N=10, id_0=0):
+    def __init__(self, net=None, N=10, id_0=0, seed_phi=1234, seed_poisson=2345):
         self.id_0 = id_0
         self.N = N # number of neurons in layer
         self.net = net # simulation time step in (ms)
+        self.rng = np.random.default_rng(seed=seed_phi) # needs numpy > 1.17 random number generator for phi
+        self.poisson_rng = np.random.default_rng(seed=seed_poisson) # needs numpy > 1.17 random number generator for poisson generator
+#         np.random.seed(1234)
 
         # initialize state variables
         self.P_ = self.P()
@@ -146,47 +188,75 @@ class Layer:
     def shift_buffer(self):
         self.B_.shift_buffer()
         
-        
+    
+    def phi(self):
+        V_diff = self.S_.V_m - self.P_.V_rheo
+        # set negative values to 0.0; same as setting phi(V) = 0 if V_m < V_rheo
+        idx_neg = np.where(V_diff < 0) 
+        V_diff[idx_neg] = 0.0
+        # it is not necessary to clip phi to 1.0, as phi(V) > 1.0 will act the same as 1.0
+        return np.power(self.P_.gamma * V_diff, self.P_.r)
+    
+    
     def evaluate(self):
         # evolve membrane potential to the next value
         # States at the right is at time t
         # V_m is now at time t+net.dt
         # algorithm based on Rotter and Diesmann (1999)
-        self.S_.V_m = self.S_.V_m * self.V_.P22 + self.S_.I_syn_ex * self.V_.P21_ex + \
-                      self.S_.I_syn_in * self.V_.P21_in + \
-                      (self.P_.I_0 + self.S_.I_ext) * self.V_.P20
+        self.S_.V_m = self.S_.V_m * self.V_.rho + \
+                      self.S_.I_syn_ex * self.V_.zeta_ex + \
+                      self.S_.I_syn_in * self.V_.zeta_in + \
+                      (self.P_.I_0 + self.S_.I_ext) * self.V_.zeta_DC
 
+        # generate poisson spike train for time window dt
+        # convert time from ms to s (poisson_rate is in Hz, while dt is in ms)
+        lambda_ = self.P_.poisson_rate * self.net.dt * 1e-3
+        # draw sample from a poisson distribution
+        self.S_.poisson = self.poisson_rng.poisson(lambda_, self.N) 
+
+        # evolve synaptic currents (weighted_spikes_ex[0] must contain spikes ariving at time t+dt)
+        self.S_.I_syn_ex = self.S_.I_syn_ex * self.V_.xi_ex + \
+                           self.B_.weighted_spikes_ex[0] + \
+                           self.S_.poisson*self.P_.poisson_weight
+        self.S_.I_syn_in = self.S_.I_syn_in * self.V_.xi_in + \
+                           self.B_.weighted_spikes_in[0]
+        
+        # decrement is_ref by 1; is_ref is now at time t+dt
+        self.S_.is_ref -= 1
+       
         # get index of neurons in refractory period
         idx_ref = np.where(self.S_.is_ref > 0)[0]
         # Set V_m to V_reset for neurons in refractory period
         # as V_m might have changed due to synaptic inputs
-        # V_m at t+net.dt will continue at V_reset if neuron is still refractory at time t+net.dt
+        # V_m at t+dt will continue at V_reset if neuron is still refractory at time t+net.dt
         self.S_.V_m[idx_ref] = self.P_.V_reset
 
-        # decrement is_ref by 1
-        # is_ref is now at time t+dt
-        self.S_.is_ref -= 1
-        
-        # evolve synaptic currents (weighted_spikes_ex[0] must contain spikes ariving at time t+dt)
-        self.S_.I_syn_ex = self.S_.I_syn_ex * self.V_.P11_ex + self.B_.weighted_spikes_ex[0]
-        self.S_.I_syn_in = self.S_.I_syn_in * self.V_.P11_in + self.B_.weighted_spikes_in[0]
-        
         # test threshold crossing at time t+dt
-        idx_spiked = np.where(self.S_.V_m >= self.P_.V_th)[0]
+        # idx_spiked = np.where(self.S_.V_m >= self.P_.V_th)[0] (deterministic case)
+        # Calculate Phi for all neurons
+        phi = self.phi()
+        # draw an array of uniform random number and test which neuron spiked
+        U_i = self.rng.random(self.N) # needs numpy > 1.17
+#         U_i = np.random.uniform(size=self.N)
+        idx_spiked = np.where(phi >= U_i)[0]
+        
         # set refractory flag; note that is_ref is already at time t+dt
         self.S_.is_ref[idx_spiked] = self.V_.ref_count
-        
-        # send spike event
-        # id_0 contains the neuron id previous to the firs neuron of the layer
-        # thus, the true neuron id is the index in the array + id_0 + 1
-        # because neuron id starts at 1, hoever index starts at 0
-        self.net.send_spike(idx_spiked + self.id_0 + 1)    
+        # Reset membrane potential in synaptic input of neurons that spiked.
+        # reset of synaptic input is not present in the original PD model.
+        self.S_.V_m[idx_spiked] = self.P_.V_reset
+        self.S_.I_syn_ex[idx_spiked] = 0.0
+        self.S_.I_syn_in[idx_spiked] = 0.0
 
+        # Send spike event
+        # id_0 contains the neuron id previous to the first neuron of the layer
+        # thus, the true neuron id is the index in the array + id_0 + 1
+        # because neuron id starts at 1, however index starts at 0
+        self.net.send_spike(idx_spiked + self.id_0 + 1)   
         
             
 class Network:
     layer = []
-    connection = {}
     spk_time = np.array([])
     spk_neuron = np.array([])
     
@@ -233,12 +303,15 @@ class Network:
                                                    'delay':np.array(delay[idx])}})
             
             
-    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt'):
+    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt', seed_phi=1234, seed_poisson=2345):
         self.t = 0.0
         self.dt = dt
         self.N = np.array([])
         self.create_layer(N)
+        self.C_ = None
         self.fname = fname
+        self.seed_phi = seed_phi
+        self.seed_poisson = seed_poisson
         
     
     # create layers. to change a neuron parameter, the layer method 'set_neuron_params' must be called
@@ -247,9 +320,13 @@ class Network:
         if type(N) == int:
             assert N > 0
             if len(self.N):
-                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1])))
+                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1]),
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             else:
-                self.layer.append(Layer(self, N, 0))
+                self.layer.append(Layer(self, N, 0,
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             self.N = np.append(self.N, N)
         else:
             for n_ in N:
@@ -263,10 +340,15 @@ class Network:
         self.N_cumsum = np.cumsum(self.N)
         self.last_neuron_id = self.N_cumsum[-1]
         
-    # create connection dictionary. See Connection above for detail
+    # create connection dictionary given list of sources and
+    # list of arrays containing targets, weights and delays for each source.
+    # See Connection above for detail
     def create_connection(self, source, target, weight, delay):
         self.C_ = self.Connection(source, target, weight, delay)
-        
+    
+    # create connection from conn_params dict
+#    def create_connection(self, conn_params={}):
+
     # send spike event to the layer containing the target neuron.
     # buffer of the target neuron at the given delay is updated.
     # note that index 0 of the buffer is at time t+dt
@@ -274,10 +356,11 @@ class Network:
     # buffer position at 1
     def send_spike(self, id_):
         for idx, source_id in enumerate(id_):
-            for jdx, target_id in enumerate(self.C_.conn[source_id]['target']):
-                ldx = np.where(target_id <= self.N_cumsum)[0][0]
-                self.layer[ldx].receive_spike(target_id, self.C_.conn[source_id]['weight'][jdx],
-                                              self.C_.conn[source_id]['delay'][jdx])
+            if self.C_:
+                for jdx, target_id in enumerate(self.C_.conn[source_id]['target']):
+                    ldx = np.where(target_id <= self.N_cumsum)[0][0]
+                    self.layer[ldx].receive_spike(target_id, self.C_.conn[source_id]['weight'][jdx],
+                                                  self.C_.conn[source_id]['delay'][jdx])
             self.spike_recorder.write('{:6d} {:12.1f}\n'.format(source_id, self.t))
             self.spk_neuron = np.append(self.spk_neuron, source_id)
             self.spk_time = np.append(self.spk_time, self.t)
@@ -288,18 +371,20 @@ class Network:
     # this may allow changing network parameters during simulation
     def simulate(self, time):
         if self.t==0:
-            self.spike_recorder = open('./spike_detector.txt','w')
+            self.spike_recorder = open(self.fname,'w')
         else:
-            self.spike_recorder = open('./spike_detector.txt','a')
+            self.spike_recorder = open(self.fname,'a')
         while (self.t <= time):
             # evolve time
             self.t += self.dt
             # evolve membrane potentials of eache layer
             for layer_ in self.layer:
                 layer_.evaluate()
-            # shift synaptic input buffer of each layer
-            for layer_ in self.layer:
-                layer_.shift_buffer()
+            # shift synaptic input buffer of each layer if there is synaptic connection.
+            # Conditions where there is no synaptic connection: simulate N trials of a single neuron
+            if self.C_:
+                for layer_ in self.layer:
+                    layer_.shift_buffer()
         self.spike_recorder.close()
         
                 

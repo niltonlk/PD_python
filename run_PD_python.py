@@ -1,35 +1,54 @@
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
+#from matplotlib.patches import Polygon
+import time
 
 import PD_python
 
+tic = time.time()
 # simulation time step
 dt = 0.1
 # number of neuron per layer
 N = np.array([20683, 5834, 21915, 5479, 4850, 1065, 14395, 2948])
+# layer specific output delay (fixed depending on neuron type - exc or inh)
+layer_specific_delay = np.array([1.5, 0.8, 1.5, 0.8, 1.5, 0.8, 1.5, 0.8])
+# layer specific external input per layer in (number of external inputs)
+layer_specific_connection = np.array([1600, 1500, 2100, 1900, 2000, 1900, 2900, 2100])
+poisson_bg_rate = 8.0
 # layer specific external DC current per layer in (pA)
-DC_BG = np.array([561.97, 526.85, 737.59, 667.34, 702.47, 667.34, 1018.58, 737.59])
+DC_BG = layer_specific_connection * 0.3512 #np.array([561.97, 526.85, 737.59, 667.34, 702.47, 667.34, 1018.58, 737.59])
 # cumulative sum of N. used to determine neuron id range
 N_cumsum = N.cumsum()
 # create array of neuron ids
 source = np.array(range(1,N_cumsum[-1]+1))
 # load connecivity data. each line represents connection values of each neuron
-target = np.load('target.npy')
-weight = np.load('weight.npy')
-delay = np.load('delay.npy')
+# target = np.load('target.npy', allow_pickle=True)
+# weight = np.load('weight.npy', allow_pickle=True)
+# delay = np.load('delay.npy', allow_pickle=True)
+target = np.load('/scratch/nilton/PD_var_delay/target.npy', allow_pickle=True)
+weight = np.load('/scratch/nilton/PD_var_delay/weight.npy', allow_pickle=True)
+delay = np.load('/scratch/nilton/PD_var_delay/delay.npy', allow_pickle=True)
 
 # create network 
-net_layer = PD_python.Network(N=N)
+net_layer = PD_python.Network(N=N, fname='/scratch/nilton/PD_var_delay/spike_recorder_var_delay.txt')
 
 # set layer specific external current input 
 # to change a neuron parameter, the set_neuron_params method of the layers must be called
 for idx, layer_ in enumerate(net_layer.layer):
-    layer_.set_neuron_params({'I_0': DC_BG[idx]})
+    layer_.set_neuron_params({'poisson_rate': layer_specific_connection[idx]*poisson_bg_rate}) #,
+#                               'syn_delay': layer_specific_delay[idx]})
+#     layer_.set_neuron_params({'I_0': DC_BG[idx]})
 # create connections. This will create a dictionary containing conection parameters
 net_layer.create_connection(source, target, weight, delay)
-# simulate network for 1000 ms
-net_layer.simulate(1000)
+create_time = time.time() - tic
+print("Time to create the connections: {:.2f} s".format(create_time))
+tic = time.time()
+# simulate network for 60500 ms
+#t_sim = 60500
+t_sim = 100
+net_layer.simulate(t_sim)
+sim_time = time.time() - tic
+print("Time to simulate: {:.2f} s".format(sim_time))
 
 # matrix of start and end id of neurons for each layer.
 # used for specify axis label position
@@ -59,6 +78,7 @@ color_list = [
     '#000000', '#888888', '#000000', '#888888'
     ]
 
+'''
 # plot raster plot
 Fig1 = plt.figure(1, figsize=(8, 6))
 for i in list(range(len(id_range))):
@@ -76,5 +96,59 @@ plt.yticks(
     )
 plt.xlim([600,800])
 # save figure
-plt.savefig('raster_plot.png', dpi=300)
+plt.savefig('raster_plot_var_delay.png', dpi=300)
+'''
+
+end=t_sim; begin=t_sim - 1000;
+if begin < 500:
+    begin = 500
+
+rates_all = []
+rates_averaged_all = []
+rates_std_all = []
+idx_t500 = np.where((net_layer.spk_time >= begin) & (net_layer.spk_time <=end))[0]
+count_of_n = np.bincount(net_layer.spk_neuron[idx_t500].astype(int))
+
+for idx, id_range_ in enumerate(id_range):
+    count_of_n_fil = count_of_n[id_range[idx][0]:id_range[idx][1]+1]
+    rate_each_n = count_of_n_fil * 1000. / (end - begin)
+    rate_averaged = np.mean(rate_each_n)
+    rate_std = np.std(rate_each_n)
+    rates_all.append(rate_each_n)
+    rates_averaged_all.append(float('%.3f' % rate_averaged))
+    rates_std_all.append(float('%.3f' % rate_std))
+print(rates_averaged_all)
+print(rates_std_all)
+
+rates_all_rev = []
+for idx in range(1,len(rates_all)+1):
+    rates_all_rev.append(rates_all[-idx])
+    
+'''
+pop_names = ['L23e','L23i','L4e','L4i','L5e','L5i','L6e','L6i']
+label_pos = list(range(len(N), 0, -1))
+color_list = ['#888888', '#000000']
+medianprops = dict(linestyle='-', linewidth=2.5, color='firebrick')
+fig, ax1 = plt.subplots(figsize=(10, 6))
+bp = plt.boxplot(rates_all_rev, 0, 'rs', 0, medianprops=medianprops)
+plt.setp(bp['boxes'], color='black')
+plt.setp(bp['whiskers'], color='black')
+plt.setp(bp['fliers'], color='red', marker='+')
+for h in list(range(len(N))):
+    boxX = []
+    boxY = []
+    box = bp['boxes'][h]
+    for j in list(range(5)):
+        boxX.append(box.get_xdata()[j])
+        boxY.append(box.get_ydata()[j])
+    boxCoords = list(zip(boxX, boxY))
+    k = h % 2
+    boxPolygon = Polygon(boxCoords, facecolor=color_list[k])
+    ax1.add_patch(boxPolygon)
+plt.xlabel('firing rate [Hz]', fontsize=18)
+plt.yticks(label_pos, pop_names, fontsize=18)
+plt.xticks(fontsize=18)
+plt.savefig('box_plot_var_delay.png', dpi=300)
+
 plt.show()
+'''
