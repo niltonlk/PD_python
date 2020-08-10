@@ -1,7 +1,8 @@
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
 import time
+
 import PD_python_fix_delay as PD_python
 
 tic = time.time()
@@ -35,15 +36,15 @@ for idx, layer_ in enumerate(net_layer.layer):
 #                               'syn_delay': layer_specific_delay[idx]})
 #     layer_.set_neuron_params({'I_0': DC_BG[idx]})
 # create connections. This will create a dictionary containing conection parameters
-net_layer.create_connection(source, target, weight, delay)
+net_layer.create_connection(source, target, weight) #, delay)
 create_time = time.time() - tic
-print("Time to create the connections: {.2f} s".format(create_time))
+print("Time to create the connections: {:.2f} s".format(create_time))
 tic = time.time()
-# simulate network for 1000 ms
+# simulate network for 1500 ms
 t_sim = 1500
 net_layer.simulate(t_sim)
 sim_time = time.time() - tic
-print("Time to simulate: {.2f} s".format(sim_time))
+print("Time to simulate: {:.2f} s".format(sim_time))
 
 # matrix of start and end id of neurons for each layer.
 # used for specify axis label position

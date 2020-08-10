@@ -1,8 +1,34 @@
+'''
+filename: stendhal_sim_discrete.py
+
+This code simulates neuron networks with the GL (Galves and Locherbach, 2013)
+neuron in discrete time.
+
+
+This code is part of STENDHAL
+A NeuroMat package for simulate neuron networks, and analyse data.
+
+Director:
+Antonio Galves
+
+Developers:
+Nilton L. Kamiji
+Christophe Pouzat
+
+Contributors:
+Renan Shimoura
+Karine Guimaraes
+Aline Duarte
+Antonio Roque
+
+July 09 2020
+'''
+
 import numpy as np
 
 class Layer:
-    id_0 = 0 # number of neurons in the network
-    N = 10
+    id_0 = 0 # number of neurons in the network (id of the last neuron in the previous layer)
+    N = 10 # number of neurons in the layer
     net = None
     
     class P: # model parameters
@@ -124,12 +150,12 @@ class Layer:
             self.weighted_spikes_in[-1][:] = 0.0
 
             
-    def __init__(self, net=None, N=10, id_0=0):
+    def __init__(self, net=None, N=10, id_0=0, seed_phi=1234, seed_poisson=2345):
         self.id_0 = id_0
         self.N = N # number of neurons in layer
         self.net = net # simulation time step in (ms)
-        self.rng = np.random.default_rng(seed=1234) # needs numpy > 1.17 random number generator for phi
-        self.poisson_rng = np.random.default_rng(seed=1235) # needs numpy > 1.17 random number generator for poisson generator
+        self.rng = np.random.default_rng(seed=seed_phi) # needs numpy > 1.17 random number generator for phi
+        self.poisson_rng = np.random.default_rng(seed=seed_poisson) # needs numpy > 1.17 random number generator for poisson generator
 #         np.random.seed(1234)
 
         # initialize state variables
@@ -185,7 +211,7 @@ class Layer:
         # generate poisson spike train for time window dt
         # convert time from ms to s (poisson_rate is in Hz, while dt is in ms)
         lambda_ = self.P_.poisson_rate * self.net.dt * 1e-3
-        self.S_poisson = poisson_rng.poisson(lambda_, self.N) # draw sample from a poisson distribution
+        self.S_.poisson = self.poisson_rng.poisson(lambda_, self.N) # draw sample from a poisson distribution
 
         # evolve synaptic currents (weighted_spikes_ex[0] must contain spikes ariving at time t+dt)
         self.S_.I_syn_ex = self.S_.I_syn_ex * self.V_.xi_ex + self.B_.weighted_spikes_ex[0] + \
@@ -277,13 +303,15 @@ class Network:
                                                    'delay':np.array(delay[idx])}})
             
             
-    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt'):
+    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt', seed_phi=1234, seed_poisson=2345):
         self.t = 0.0
         self.dt = dt
         self.N = np.array([])
         self.create_layer(N)
         self.C_ = None
         self.fname = fname
+        self.seed_phi = seed_phi
+        self.seed_poisson = seed_poisson
         
     
     # create layers. to change a neuron parameter, the layer method 'set_neuron_params' must be called
@@ -292,9 +320,13 @@ class Network:
         if type(N) == int:
             assert N > 0
             if len(self.N):
-                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1])))
+                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1]),
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             else:
-                self.layer.append(Layer(self, N, 0))
+                self.layer.append(Layer(self, N, 0,
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             self.N = np.append(self.N, N)
         else:
             for n_ in N:
@@ -334,9 +366,9 @@ class Network:
     # this may allow changing network parameters during simulation
     def simulate(self, time):
         if self.t==0:
-            self.spike_recorder = open('./spike_detector.txt','w')
+            self.spike_recorder = open(self.fname,'w')
         else:
-            self.spike_recorder = open('./spike_detector.txt','a')
+            self.spike_recorder = open(self.fname,'a')
         while (self.t <= time):
             # evolve time
             self.t += self.dt

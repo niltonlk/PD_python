@@ -16,7 +16,7 @@ class Layer:
             self.tau_syn_ex = 0.5 # excitatory synaptic time constant in (ms)
             self.tau_syn_in = 0.5 # inhibitory synaptic time constant in (ms)
             self.I_0 = 0.0 # constant current in (pA)
-            self.syn_delay = 0.75 # synaptic output delay in (ms)
+            self.syn_delay = 1.5 # synaptic output delay in (ms)
             self.gamma = 0.1 # slope of the firing probability funtion in (1/mV)
             self.r = 0.4 # curvature of the firing probability function (unitless)
             self.V_rheo = 15.0 # rheobase potential, potential in which firing probability becomes > 0 in (mV)
@@ -127,12 +127,12 @@ class Layer:
             self.weighted_spikes_in[-1][:] = 0.0
 
             
-    def __init__(self, net=None, N=10, id_0=0):
+    def __init__(self, net=None, N=10, id_0=0, seed_phi=1234, seed_poisson=2345):
         self.id_0 = id_0
         self.N = N # number of neurons in layer
         self.net = net # simulation time step in (ms)
-        self.rng = np.random.default_rng(seed=1234) # needs numpy > 1.17 random number generator for phi
-        self.poisson_rng = np.random.default_rng(seed=1235) # needs numpy > 1.17 random number generator for poisson generator
+        self.rng = np.random.default_rng(seed=seed_phi) # needs numpy > 1.17 random number generator for phi
+        self.poisson_rng = np.random.default_rng(seed=seed_poisson) # needs numpy > 1.17 random number generator for poisson generator
 #         np.random.seed(1234)
 
         # initialize state variables
@@ -188,7 +188,7 @@ class Layer:
         # generate poisson spike train for time window dt
         # convert time from ms to s (poisson_rate is in Hz, while dt is in ms)
         lambda_ = self.P_.poisson_rate * self.net.dt * 1e-3
-        self.S_poisson = poisson_rng.poisson(lambda_, self.N) # draw sample from a poisson distribution
+        self.S_.poisson = self.poisson_rng.poisson(lambda_, self.N) # draw sample from a poisson distribution
 
         # evolve synaptic currents (weighted_spikes_ex[0] must contain spikes ariving at time t+dt)
         self.S_.I_syn_ex = self.S_.I_syn_ex * self.V_.xi_ex + self.B_.weighted_spikes_ex[0] + \
@@ -282,13 +282,15 @@ class Network:
                                          })
             
             
-    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt'):
+    def __init__(self, dt=0.1, N=[], fname='spike_recorder.txt', seed_phi=1234, seed_poisson=2345):
         self.t = 0.0
         self.dt = dt
         self.N = np.array([])
         self.create_layer(N)
         self.C_ = None
         self.fname = fname
+        self.seed_phi = seed_phi
+        self.seed_poisson = seed_poisson
         
     
     # create layers. to change a neuron parameter, the layer method 'set_neuron_params' must be called
@@ -297,9 +299,13 @@ class Network:
         if type(N) == int:
             assert N > 0
             if len(self.N):
-                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1])))
+                self.layer.append(Layer(self, N, int(np.cumsum(self.N)[-1]),
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             else:
-                self.layer.append(Layer(self, N, 0))
+                self.layer.append(Layer(self, N, 0,
+                                        seed_phi=self.seed_phi+len(self.N),
+                                        seed_poisson=self.seed_poisson+len(self.N)))
             self.N = np.append(self.N, N)
         else:
             for n_ in N:
@@ -329,7 +335,8 @@ class Network:
                 # If there is no multapses, it may be possible to send spike layer by layer
                 for jdx, target_id in enumerate(self.C_.conn[source_id]['target']):
                     ldx = np.where(target_id <= self.N_cumsum)[0][0]
-                    self.layer[ldx].receive_spike(target_id, self.C_.conn[source_id]['weight'][jdx], delay)
+                    self.layer[ldx].receive_spike(target_id, self.C_.conn[source_id]['weight'][jdx],
+                                                  delay)
             self.spike_recorder.write('{:6d} {:12.1f}\n'.format(source_id, self.t))
             self.spk_neuron = np.append(self.spk_neuron, source_id)
             self.spk_time = np.append(self.spk_time, self.t)
@@ -340,9 +347,9 @@ class Network:
     # this may allow changing network parameters during simulation
     def simulate(self, time):
         if self.t==0:
-            self.spike_recorder = open('./spike_detector.txt','w')
+            self.spike_recorder = open(self.fname,'w')
         else:
-            self.spike_recorder = open('./spike_detector.txt','a')
+            self.spike_recorder = open(self.fname,'a')
         while (self.t <= time):
             # evolve time
             self.t += self.dt

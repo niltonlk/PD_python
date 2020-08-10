@@ -45,7 +45,7 @@ print("Time to create the connections: {:.2f} s".format(create_time))
 tic = time.time()
 # simulate network for 60500 ms
 #t_sim = 60500
-t_sim = 100
+t_sim = 1500
 net_layer.simulate(t_sim)
 sim_time = time.time() - tic
 print("Time to simulate: {:.2f} s".format(sim_time))
