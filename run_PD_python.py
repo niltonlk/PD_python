@@ -2,6 +2,7 @@ import numpy as np
 #import matplotlib.pyplot as plt
 #from matplotlib.patches import Polygon
 import time
+#import cProfile
 
 import PD_python
 
@@ -9,7 +10,7 @@ tic = time.time()
 # simulation time step
 dt = 0.1
 # number of neuron per layer
-N = np.array([20683, 5834, 21915, 5479, 4850, 1065, 14395, 2948])
+N = (np.array([20683, 5834, 21915, 5479, 4850, 1065, 14395, 2948])*0.1).astype(int)
 # layer specific output delay (fixed depending on neuron type - exc or inh)
 layer_specific_delay = np.array([1.5, 0.8, 1.5, 0.8, 1.5, 0.8, 1.5, 0.8])
 # layer specific external input per layer in (number of external inputs)
@@ -22,34 +23,36 @@ N_cumsum = N.cumsum()
 # create array of neuron ids
 source = np.array(range(1,N_cumsum[-1]+1))
 # load connecivity data. each line represents connection values of each neuron
-# target = np.load('target.npy', allow_pickle=True)
-# weight = np.load('weight.npy', allow_pickle=True)
-# delay = np.load('delay.npy', allow_pickle=True)
-target = np.load('/scratch/nilton/PD_var_delay/target.npy', allow_pickle=True)
-weight = np.load('/scratch/nilton/PD_var_delay/weight.npy', allow_pickle=True)
-delay = np.load('/scratch/nilton/PD_var_delay/delay.npy', allow_pickle=True)
+target = np.load('target_01.npy', allow_pickle=True)
+weight = np.load('weight_01.npy', allow_pickle=True)
+delay = np.load('delay_01.npy', allow_pickle=True)
+# target = np.load('/scratch/nilton/PD_var_delay/target.npy', allow_pickle=True)
+# weight = np.load('/scratch/nilton/PD_var_delay/weight.npy', allow_pickle=True)
+# delay = np.load('/scratch/nilton/PD_var_delay/delay.npy', allow_pickle=True)
 
+
+#with cProfile.Profile() as pr:
 # create network 
-net_layer = PD_python.Network(N=N, fname='/scratch/nilton/PD_var_delay/spike_recorder_var_delay.txt')
+net_layer = PD_python.Network(N=N, fname='spike_recorder.txt')
 
 # set layer specific external current input 
 # to change a neuron parameter, the set_neuron_params method of the layers must be called
 for idx, layer_ in enumerate(net_layer.layer):
     layer_.set_neuron_params({'poisson_rate': layer_specific_connection[idx]*poisson_bg_rate}) #,
-#                               'syn_delay': layer_specific_delay[idx]})
-#     layer_.set_neuron_params({'I_0': DC_BG[idx]})
-# create connections. This will create a dictionary containing conection parameters
+    #                               'syn_delay': layer_specific_delay[idx]})
+    #     layer_.set_neuron_params({'I_0': DC_BG[idx]})
+    # create connections. This will create a dictionary containing conection parameters
 net_layer.create_connection(source, target, weight, delay)
 create_time = time.time() - tic
 print("Time to create the connections: {:.2f} s".format(create_time))
 tic = time.time()
 # simulate network for 60500 ms
 #t_sim = 60500
-t_sim = 100
+t_sim = 1000
 net_layer.simulate(t_sim)
 sim_time = time.time() - tic
 print("Time to simulate: {:.2f} s".format(sim_time))
-
+    
 # matrix of start and end id of neurons for each layer.
 # used for specify axis label position
 # and to slice data
@@ -62,6 +65,9 @@ id_range = np.array([[1, N_cumsum[0]],
                     [N_cumsum[5]+1, N_cumsum[6]],
                     [N_cumsum[6]+1, N_cumsum[7]]])
 
+#pr.print_stats()
+
+'''
 # id of the last neuron in the network
 highest_id = id_range[-1][-1]
 # calculate yaxis label position
@@ -76,7 +82,8 @@ ylabels = ['L23', 'L4', 'L5', 'L6']
 color_list = [
     '#000000', '#888888', '#000000', '#888888',
     '#000000', '#888888', '#000000', '#888888'
-    ]
+]
+'''
 
 '''
 # plot raster plot
@@ -99,6 +106,7 @@ plt.xlim([600,800])
 plt.savefig('raster_plot_var_delay.png', dpi=300)
 '''
 
+'''
 end=t_sim; begin=t_sim - 1000;
 if begin < 500:
     begin = 500
@@ -123,7 +131,8 @@ print(rates_std_all)
 rates_all_rev = []
 for idx in range(1,len(rates_all)+1):
     rates_all_rev.append(rates_all[-idx])
-    
+'''
+
 '''
 pop_names = ['L23e','L23i','L4e','L4i','L5e','L5i','L6e','L6i']
 label_pos = list(range(len(N), 0, -1))
