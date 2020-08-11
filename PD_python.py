@@ -224,10 +224,15 @@ class Layer:
 #        spk = self.net.spk_buffer.read(self.net.t)
 #        idx_spk = np.where((spk[:,0]>=self.id_0) & (spk[:,0]<self.id_0+self.N))[0] # find index of neuron in the current layer
         spk = self.net.spk_buffer.read(self.id_0, self.id_0+self.N, self.net.t)
-        idx_exc = np.where(spk[:,1]>0)[0] # find index of excitatory synapse
-        idx_inh = np.where(spk[:,1]<0)[0] # find index of inhibitory synapse
-        self.S_.I_syn_ex[spk[idx_exc,0].astype(int)-self.id_0] += spk[idx_exc,1] # add excitatory input
-        self.S_.I_syn_in[spk[idx_inh,0].astype(int)-self.id_0] += spk[idx_inh,1] # add inhibitory input
+        for idx, val in enumerate(spk[:,0]):
+            if spk[idx,1] > 0: # weight is positive (excitatory)
+                self.S_.I_syn_ex[int(val)-self.id_0] += spk[idx,1]
+            else: # weight is negative (inhibitory)
+                self.S_.I_syn_in[int(val)-self.id_0] += spk[idx,1]
+#        idx_exc = np.where(spk[:,1]>0)[0] # find index of excitatory synapse
+#        idx_inh = np.where(spk[:,1]<0)[0] # find index of inhibitory synapse
+#        self.S_.I_syn_ex[spk[idx_exc,0].astype(int)-self.id_0] += spk[idx_exc,1] # add excitatory input
+#        self.S_.I_syn_in[spk[idx_inh,0].astype(int)-self.id_0] += spk[idx_inh,1] # add inhibitory input
         
         # decrement is_ref by 1; is_ref is now at time t+dt
         self.S_.is_ref -= 1
