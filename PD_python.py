@@ -26,7 +26,7 @@ July 09 2020
 import numpy as np
 
 class Layer:
-    id_0 = 0 # number of neurons in the network (id of the last neuron in the previous layer)
+    id_0 = 0 # initial neuron ID of the layer
     N = 10 # number of neurons in the layer
     net = None
     
@@ -150,7 +150,7 @@ class Layer:
 
             
     def __init__(self, net=None, N=10, id_0=0, seed_phi=1234, seed_poisson=2345):
-        self.id_0 = id_0
+        self.id_0 = id_0 # initial neuron ID of the layer
         self.N = N # number of neurons in layer
         self.net = net # simulation time step in (ms)
         self.rng = np.random.default_rng(seed=seed_phi) # needs numpy > 1.17 random number generator for phi
